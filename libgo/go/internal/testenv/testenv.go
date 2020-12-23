@@ -13,12 +13,14 @@ package testenv
 import (
 	"errors"
 	"flag"
+	"internal/cfg"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -48,10 +50,10 @@ func HasGoBuild() bool {
 		return false
 	}
 	switch runtime.GOOS {
-	case "android", "nacl":
+	case "android", "js":
 		return false
 	case "darwin":
-		if strings.HasPrefix(runtime.GOARCH, "arm") {
+		if runtime.GOARCH == "arm64" {
 			return false
 		}
 	}
@@ -101,6 +103,12 @@ func GoToolPath(t testing.TB) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Add all environment variables that affect the Go command to test metadata.
+	// Cached test results will be invalidate when these variables change.
+	// See golang.org/issue/32285.
+	for _, envVar := range strings.Fields(cfg.KnownEnv) {
+		os.Getenv(envVar)
+	}
 	return path
 }
 
@@ -128,10 +136,10 @@ func GoTool() (string, error) {
 // using os.StartProcess or (more commonly) exec.Command.
 func HasExec() bool {
 	switch runtime.GOOS {
-	case "nacl":
+	case "js":
 		return false
 	case "darwin":
-		if strings.HasPrefix(runtime.GOARCH, "arm") {
+		if runtime.GOARCH == "arm64" {
 			return false
 		}
 	}
@@ -141,10 +149,8 @@ func HasExec() bool {
 // HasSrc reports whether the entire source tree is available under GOROOT.
 func HasSrc() bool {
 	switch runtime.GOOS {
-	case "nacl":
-		return false
 	case "darwin":
-		if strings.HasPrefix(runtime.GOARCH, "arm") {
+		if runtime.GOARCH == "arm64" {
 			return false
 		}
 	}
@@ -163,16 +169,37 @@ func MustHaveExec(t testing.TB) {
 	}
 }
 
+var execPaths sync.Map // path -> error
+
+// MustHaveExecPath checks that the current system can start the named executable
+// using os.StartProcess or (more commonly) exec.Command.
+// If not, MustHaveExecPath calls t.Skip with an explanation.
+func MustHaveExecPath(t testing.TB, path string) {
+	MustHaveExec(t)
+
+	err, found := execPaths.Load(path)
+	if !found {
+		_, err = exec.LookPath(path)
+		err, _ = execPaths.LoadOrStore(path, err)
+	}
+	if err != nil {
+		t.Skipf("skipping test: %s: %s", path, err)
+	}
+}
+
 // HasExternalNetwork reports whether the current system can use
 // external (non-localhost) networks.
 func HasExternalNetwork() bool {
-	return !testing.Short()
+	return !testing.Short() && runtime.GOOS != "js"
 }
 
 // MustHaveExternalNetwork checks that the current system can use
 // external (non-localhost) networks.
 // If not, MustHaveExternalNetwork calls t.Skip with an explanation.
 func MustHaveExternalNetwork(t testing.TB) {
+	if runtime.GOOS == "js" {
+		t.Skipf("skipping test: no external network on %s", runtime.GOOS)
+	}
 	if testing.Short() {
 		t.Skipf("skipping test: no external network in -short mode")
 	}

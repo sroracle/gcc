@@ -14,7 +14,10 @@ import (
 
 // FIXME: pathconf returns long, not int.
 //extern pathconf
-func libc_pathconf(*byte, int) int
+func libc_pathconf(*byte, int32) int
+
+//extern dup
+func libc_dup(int32) int32
 
 func clen(n []byte) int {
 	for i := 0; i < len(n); i++ {
@@ -48,11 +51,19 @@ func (file *File) readdirnames(n int) (names []string, err error) {
 		}
 
 		syscall.Entersyscall()
-		r := libc_opendir(p)
+		fd := libc_dup(int32(file.pfd.Sysfd))
 		errno := syscall.GetErrno()
 		syscall.Exitsyscall()
+		if fd < 0 {
+			return nil, &PathError{"dup", file.name, errno}
+		}
+
+		syscall.Entersyscall()
+		r := libc_fdopendir(fd)
+		errno = syscall.GetErrno()
+		syscall.Exitsyscall()
 		if r == nil {
-			return nil, &PathError{"opendir", file.name, errno}
+			return nil, &PathError{"fdopendir", file.name, errno}
 		}
 
 		file.dirinfo = new(dirInfo)
@@ -99,4 +110,13 @@ func (file *File) readdirnames(n int) (names []string, err error) {
 		return names, io.EOF
 	}
 	return names, nil
+}
+
+func (f *File) seekInvalidate() {
+	if f.file.dirinfo != nil {
+		syscall.Entersyscall()
+		libc_closedir(f.file.dirinfo.dir)
+		syscall.Exitsyscall()
+		f.file.dirinfo = nil
+	}
 }
