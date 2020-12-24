@@ -708,7 +708,7 @@ go_format_type (struct godump_container *container, tree type,
       /* References to complex builtin types cannot be translated to
 	Go.  */
       if (DECL_P (TYPE_NAME (type))
-	  && DECL_IS_UNDECLARED_BUILTIN (TYPE_NAME (type)))
+	  && DECL_IS_BUILTIN (TYPE_NAME (type)))
 	ret = false;
 
       name = TYPE_IDENTIFIER (type);
